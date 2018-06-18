@@ -271,7 +271,11 @@ function set(msg) {
 				break;
 			case "loop":
 				msg.shift();
-				loop();
+				loop(1);
+				break;
+			case "unloop":
+				msg.shift();
+				loop(0);
 				break;
 			case "pause":
 				msg.shift();
@@ -301,11 +305,23 @@ function set(msg) {
 			}
 			else break;
 		};
+
 		log("settracks "+settracks);
 		for (i=0; i<settracks.length; i++) {
 			var track = liveset["tracks"][settracks[i]];
-			var tmsg = (i==settracks.length-1) ? msg : msg.slice(); // copy msg for each track until last
-			settrack(track, tmsg, fade, delay);
+			var tmsg = msg.slice();
+			if (i==settracks.length-1) {
+				log("msg");
+				settrack(track, msg, fade, delay);
+				break;
+			}
+			else {
+				log("tmsg");
+				settrack(track, tmsg, fade, delay);		
+			};
+			//var tmsg = (i==settracks.length-1) ? msg : msg.slice(); // copy msg for each track until last
+			//log("settrack", track, tmsg, fade, delay);
+			//settrack(track, tmsg, fade, delay);
 		};
 
 		// set scene if name of scene
@@ -378,60 +394,75 @@ function settrack(track, msg, fade, delay) {
 				setout(track["track"], "arm", 0);
 				break;
 		};
-		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
+		//if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
+
+		// if it is a device
+		log(track["devices"]);
+		if (msg[0] in track["devices"]) setdevice(track["devices"][msg.shift()], msg, fade, delay);
+
 
 		// set devices if device name/names
-		var setdevices = [];
-		if (msg[0]=="devices") {
-			msg.shift();
-			for (d in track["devices"]) setdevices.push(d);
+		// var setdevices = [];
+		// if (msg[0]=="devices") {
+		// 	msg.shift();
+		// 	for (d in track["devices"]) setdevices.push(d);
+		// };
+		// while (msg.length > 0) {
+		// 	if (msg[0] in track["devices"]) setdevices.push(msg.shift());
+		// 	else if (msg[0].charAt(0)=="-") {
+		// 		var index = setdevices.indexOf(msg[0].slice(1));
+		// 		if (index != -1) {
+		// 			msg.shift();
+		// 			setdevices.splice(index, 1);
+		// 		}
+		// 		else break;
+		// 	}
+		// 	else break;
+		// };
+		// for (i=0; i<setdevices.length; i++) {
+		// 	var device = track["devices"][setdevices[i]];
+		// 	var dmsg = (i==setdevices.length-1) ? msg : msg.slice(); // copy msg for each device until the last
+		// 	setdevice(device, dmsg, fade, delay);
+		// };
+
+
+
+		// if it is a send level (sendnamedb)
+		if (msg[0] in track["sends"]) {
+			var name = msg.shift();
+			var db = convertdb(msg.shift());
+			if (db != null) setparam(track["sends"][name], db, fade, delay);
 		};
-		while (msg.length > 0) {
-			if (msg[0] in track["devices"]) setdevices.push(msg.shift());
-			else if (msg[0].charAt(0)=="-") {
-				var index = setdevices.indexOf(msg[0].slice(1));
-				if (index != -1) {
-					msg.shift();
-					setdevices.splice(index, 1);
-				}
-				else break;
-			}
-			else break;
-		};
-		for (i=0; i<setdevices.length; i++) {
-			var device = track["devices"][setdevices[i]];
-			var dmsg = (i==setdevices.length-1) ? msg : msg.slice(); // copy msg for each device until the last
-			setdevice(device, dmsg, fade, delay);
-		};
-		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
+
+		//if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
 
 		// set sends if send name/names
-		var setsends = [];
-		if (msg[0]=="sendsdb") {
-			msg.shift()
-			for (s in track["sends"]) setsends.push(s);
-		};
-		while (msg.length > 0) {
-			if (msg[0] in track["sends"]) setsends.push(msg.shift());
-			else if (msg[0].charAt(0)=="-") {
-				var index = setsends.indexOf(msg[0].slice(1));
-				if (index != -1) {
-					msg.shift();
-					setsends.splice(index, 1);
-				}
-				else break;
-			}
-			else break;
-		};
-		if (setsends.length > 0) {
-			var db = convertdb(msg.shift());
-			if (db != null) {
-				for (j=0; j<setsends.length; j++) {
-					var sendid = track["sends"][setsends[j]];
-					setparam(sendid, db, fade, delay);
-				};
-			};
-		};
+		// var setsends = [];
+		// if (msg[0]=="sendsdb") {
+		// 	msg.shift()
+		// 	for (s in track["sends"]) setsends.push(s);
+		// };
+		// while (msg.length > 0) {
+		// 	if (msg[0] in track["sends"]) setsends.push(msg.shift());
+		// 	else if (msg[0].charAt(0)=="-") {
+		// 		var index = setsends.indexOf(msg[0].slice(1));
+		// 		if (index != -1) {
+		// 			msg.shift();
+		// 			setsends.splice(index, 1);
+		// 		}
+		// 		else break;
+		// 	}
+		// 	else break;
+		// };
+		// if (setsends.length > 0) {
+		// 	var db = convertdb(msg.shift());
+		// 	if (db != null) {
+		// 		for (j=0; j<setsends.length; j++) {
+		// 			var sendid = track["sends"][setsends[j]];
+		// 			setparam(sendid, db, fade, delay);
+		// 		};
+		// 	};
+		// };
 		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
 	};
 
@@ -524,7 +555,8 @@ function setcuepoint(cuepoint) {
 	setout(liveset["set"], "loop_length", cuepoint["end"]-cuepoint["start"]);
 
 	// jump to the point
-	setout([liveset["set"], "current_song_time", cuepoint["start"]]);
+	//setout([liveset["set"], "current_song_time", cuepoint["start"]]);
+	//setout(liveset["set"], "back_to_arranger", 0);
 	callout(cuepoint["cuepoint"], "jump");
 
 	// play and loop messages handled in set()
@@ -636,13 +668,13 @@ function stop() {
 
 function play() {
 	callout(liveset["set"], "start_playing");
-	setout(liveset["set"], "loop", 0);
+	//setout(liveset["set"], "loop", 0);
 	return;
 }
 
-function loop() {
-	callout(liveset["set"], "start_playing");
-	setout(liveset["set"], "loop", 1);
+function loop(bool) {
+	//callout(liveset["set"], "start_playing");
+	setout(liveset["set"], "loop", bool);
 	return;
 }
 
