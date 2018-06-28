@@ -1,5 +1,5 @@
 inlets = 1;
-outlets = 4; // 0 = id and messages to live.object, 1 = info to fades, 2 = info to delays, 3 = info
+outlets = 5; // 0 = id and messages to live.object, 1 = info to fades, 2 = info to delays, 3 = refire/restore messages, 4 = info
 
 // LOGGING
 
@@ -21,18 +21,22 @@ function log() {
 			out = message;
 		}
 		post(out);
-		outlet(3, out);
+		//outlet(4, out);
 	}
 	post("\n");
 }
 
 // INITIALIZATION
 
+var s;
 var tempoapi;
 var tempo;
 var liveset;
 var thistrack;
 var activefades;
+var blank;
+var refire;
+//var stop;
 
 function init() {
 	thistrack = new LiveAPI("this_device canonical_parent");
@@ -61,7 +65,7 @@ init();
 // build the set's id dictionary
 function builddict() {
 
-	var s = new LiveAPI("live_set");
+	s = new LiveAPI("live_set");
 	//var t = new LiveAPI("live_set master_track mixer_device song_tempo");
 	
 	var dict = {
@@ -80,6 +84,7 @@ function builddict() {
 	for (var i=0; i<s.getcount("return_tracks"); i++) {
 		var r = new LiveAPI("live_set return_tracks "+i);
 		var rname = getname(r).slice(1);
+		//if (rname[0]==".") continue; //if flagged as omitted, pass
 		dict["tracks"][rname] = trackdict(r, [], false, false, null);
 		rnames.push(rname);
 	};
@@ -87,33 +92,33 @@ function builddict() {
 	for (var j=0; j<s.getcount("tracks"); j++) {
 		var t = new LiveAPI("live_set tracks "+j);
 		var name = getname(t);
+		if (name==false) continue; // if flagged as omitted, pass
 		if (t.id != thistrack.id) dict["tracks"][name] = trackdict(t, rnames, true, false, j);
 	};
 
-	// scenes
-	for (var k=0; k<s.getcount("scenes"); k++) {
-		var sc = new LiveAPI("live_set scenes "+k);
-		var scdict = {"scene": sc.id};
-		var scarray = [];
-		for (var l=0; l<sc.getcount("clip_slots"); l++) {
-			scarray.push(new LiveAPI("live_set scenes "+k+" clip_slots "+l).id);
+	// cuepoints
+	var cuepoints = {};
+	var cuetimes = [];
+	for (var m=0; m<s.getcount("cue_points"); m++) {
+		var cp = new LiveAPI("live_set cue_points "+m);
+		var start = parseFloat(cp.get("time"));
+		cuepoints[getname(cp)] = {
+			"cuepoint": cp.id,
+			"start": start
 		};
-		scdict["slots"] = scarray;
-		dict["scenes"][getname(sc)] = scdict;
+		cuetimes.push(start);
+	};
+	cuetimes = cuetimes.sort(function (a, b) { return a-b; });
+
+	for (cuepoint in cuepoints) {
+		var start = cuepoints[cuepoint]["start"];
+		var endindex = cuetimes.indexOf(start)+1;
+		var end = (endindex == cuetimes.length) ? s.get("last_event_time") : cuetimes[endindex];
+		cuepoints[cuepoint]["end"] = end;
 	};
 
-	// cuepoints
-	var nexttime = s.get("last_event_time");
-	for (var m=s.getcount("cue_points")-1; m>=0; m--) {
-		var cp = new LiveAPI("live_set cue_points "+m);
-		var thistime = cp.get("time");
-		dict["cuepoints"][getname(cp)] = {
-			"cuepoint": cp.id,
-			"start": thistime,
-			"end": nexttime
-		};
-		nexttime = thistime
-	}
+
+	dict["cuepoints"] = cuepoints;
 
 	return dict;
 }
@@ -154,16 +159,20 @@ function trackdict(track, returnnames, hassends, ismaster, num) {
 	// iterate through track devices
 	for (var j=0; j<t.getcount("devices"); j++) {
 		var d = new LiveAPI(tpath + " devices " + j);
+		var dname = getname(d);
+		if (dname==false) continue; // if flagged as omitted, pass
 		var dpath = d.unquotedpath;
 		var ddict = {};
 		// record ID for every device parameter
-		for (var k=0; k<d.getcount("parameters"); k++) {
+		for (var k=0; k<9; k++) { // only the first 9 parameters are logged, to save time
 			var p = new LiveAPI(dpath+" parameters "+k);
-			ddict[getname(p)] = p.id;
+			var pname = getname(p);
+			if (pname==false) continue; // if flagged as omitted, pass
+			ddict[pname] = p.id;
 		};
 
 		// dictionary entry for the device
-		dict["devices"][getname(d)] = ddict;
+		dict["devices"][dname] = ddict;
 	}
 	return dict;
 }
@@ -232,19 +241,15 @@ function getinfo() {
 
 // READ THE SET MESSAGE
 
-//set.immediate = 1;
-//settrack.immediate = 1;
-//setdevice.immediate = 1;
-//setscene.immediate = 1;
-//setcuepoint.immediate = 1;
-//setparam.immediate = 1;
-
 
 function set(msg) {	
 	log("set", msg);
 
 	var fade = null;
 	var delay = null;
+	refire = -1;
+	blank = false;
+	//stop = false;
 
 	while(msg.length > 0) {
 		log("set while...", msg)
@@ -261,57 +266,50 @@ function set(msg) {
 				var tempo = msg.shift();
 				if (isnum(tempo)) setparam(liveset["tempo"], tempo, fade, delay);
 				break;
-			case "stop":
-				msg.shift();
-				stop();
-				break;
+			// case "stop":
+			// 	msg.shift();
+			// 	blank = true;
+			// 	stop = true;
+			// 	break;
 			case "play":
 				msg.shift();
 				play();
 				break;
 			case "loop":
 				msg.shift();
-				loop();
+				loop(1);
 				break;
-			case "pause":
+			case "unloop":
 				msg.shift();
-				pause();
+				loop(0);
 				break;
 			case "quant":
 				msg.shift();
 				var quant = msg.shift();
 				if (isnum(quant)) setout(liveset["set"], "clip_trigger_quantization", quant);
+				break;
+			case "clickon":
+				msg.shift();
+				setout(liveset["set"], "metronome", 1);
+				break;
+			case "clickoff":
+				msg.shift();
+				setout(liveset["set"], "metronome", 0);
+				break;
+			case "blank":
+				msg.shift();
+				blank = true;
+				break;
+			case "restore":
+				msg.shift();
+				outlet(3, "restore");
+				break;
 		};
 
-		// set track if track name/names
-		var settracks = [];
-		if (msg[0]=="tracks") {
-			msg.shift();
-			for (t in liveset["tracks"]) settracks.push(t);
-		};
-		while (msg.length > 0) {
-			if (msg[0] in liveset["tracks"]) settracks.push(msg.shift());
-			else if (msg[0].charAt(0)=="-") {
-				var index = settracks.indexOf(msg[0].slice(1));
-				if (index != -1) {
-					msg.shift();
-					settracks.splice(index, 1);
-				}
-				else break;
-			}
-			else break;
-		};
-		log("settracks "+settracks);
-		for (i=0; i<settracks.length; i++) {
-			var track = liveset["tracks"][settracks[i]];
-			var tmsg = (i==settracks.length-1) ? msg : msg.slice(); // copy msg for each track until last
-			settrack(track, tmsg, fade, delay);
-		};
-
-		// set scene if name of scene
-		if (msg[0] in liveset["scenes"]) {
-			var scene = msg.shift();
-			setscene(liveset["scenes"][scene], msg);
+		// set track if name of track
+		if (msg[0] in liveset["tracks"]) {
+			var track = msg.shift();
+			settrack(liveset["tracks"][track], msg, fade, delay);
 		};
 
 		// set cuepoint if name of cuepoint
@@ -377,61 +375,24 @@ function settrack(track, msg, fade, delay) {
 				msg.shift();
 				setout(track["track"], "arm", 0);
 				break;
+			case "refire":
+				msg.shift();
+				if (refire == -1) refire = [];
+				refire.push(parseInt(track["num"]));
 		};
-		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
+		if (msg.length == 0) return;
+		//if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
 
-		// set devices if device name/names
-		var setdevices = [];
-		if (msg[0]=="devices") {
-			msg.shift();
-			for (d in track["devices"]) setdevices.push(d);
-		};
-		while (msg.length > 0) {
-			if (msg[0] in track["devices"]) setdevices.push(msg.shift());
-			else if (msg[0].charAt(0)=="-") {
-				var index = setdevices.indexOf(msg[0].slice(1));
-				if (index != -1) {
-					msg.shift();
-					setdevices.splice(index, 1);
-				}
-				else break;
-			}
-			else break;
-		};
-		for (i=0; i<setdevices.length; i++) {
-			var device = track["devices"][setdevices[i]];
-			var dmsg = (i==setdevices.length-1) ? msg : msg.slice(); // copy msg for each device until the last
-			setdevice(device, dmsg, fade, delay);
-		};
-		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
+		// if it is a device
+		if (msg[0] in track["devices"]) setdevice(track["devices"][msg.shift()], msg, fade, delay);
 
-		// set sends if send name/names
-		var setsends = [];
-		if (msg[0]=="sendsdb") {
-			msg.shift()
-			for (s in track["sends"]) setsends.push(s);
+		// if it is a send level (sendnamedb)
+		if (msg[0] in track["sends"]) {
+			var name = msg.shift();
+			var db = convertsend(msg.shift());
+			if (db != null) setparam(track["sends"][name], db, fade, delay);
 		};
-		while (msg.length > 0) {
-			if (msg[0] in track["sends"]) setsends.push(msg.shift());
-			else if (msg[0].charAt(0)=="-") {
-				var index = setsends.indexOf(msg[0].slice(1));
-				if (index != -1) {
-					msg.shift();
-					setsends.splice(index, 1);
-				}
-				else break;
-			}
-			else break;
-		};
-		if (setsends.length > 0) {
-			var db = convertdb(msg.shift());
-			if (db != null) {
-				for (j=0; j<setsends.length; j++) {
-					var sendid = track["sends"][setsends[j]];
-					setparam(sendid, db, fade, delay);
-				};
-			};
-		};
+
 		if (msg.length == 0 || msg.length == len) return; //if done or nothing has happened, exit
 	};
 
@@ -476,44 +437,6 @@ function setdevice(device, msg, fade, delay) {
 
 }
 
-function setscene(scene, msg) {
-	log("setscene", scene, msg, fade, delay);
-
-	var tofire = [];
-	while (msg.length>0) {
-		log("setscene while...", msg)
-		var len = msg.length;
-
-		switch(msg[0]) {
-			case "fire":
-				msg.shift();
-				// fire all the clipslots in the array, if empty fire the scene
-				if (tofire.length == 0) {
-					var id = scene["scene"];
-					callout(id, "fire");
-				}
-				else {
-					for (var i=0; i<tofire.length; i++) {
-						var slot = tofire[i];
-						var id = scene["slots"][slot];
-						callout(id, "fire");
-					}
-				}
-				break;
-		};
-
-		// if the name of a track
-		if (msg[0] in liveset["tracks"]) {
-			// add to a list of clips to fire
-			var track = msg.shift();
-			tofire.push(liveset["tracks"][track]["num"]);
-		}
-
-		if (msg.length == len) return; //if nothing has happened, exit
-	};
-
-	return;
-}
 
 function setcuepoint(cuepoint) {
 	log("setcuepoint", cuepoint);
@@ -525,6 +448,7 @@ function setcuepoint(cuepoint) {
 
 	// jump to the point
 	setout([liveset["set"], "current_song_time", cuepoint["start"]]);
+	//setout(liveset["set"], "back_to_arranger", 0);
 	callout(cuepoint["cuepoint"], "jump");
 
 	// play and loop messages handled in set()
@@ -567,7 +491,6 @@ function fadeout(id, value, time) {
 	if (activefades.indexOf(parseInt(id)) != -1) return;
 	outlet(1, id, value, time);
 	activefades.push(parseInt(id));
-	log(activefades);
 }
 
 function delayout(id, value, time, fadetime) {
@@ -576,7 +499,10 @@ function delayout(id, value, time, fadetime) {
 
 function setfinish() {
 	log("setfinish");
-	outlet(3, "bang")
+	outlet(3, "refire", refire);
+	if (! blank) outlet(3, "fire");
+	//outlet(3, "stop", (stop) ? 1 : 0);
+	return;
 }
 
 
@@ -627,22 +553,15 @@ function enabletrack(track, tog) {
 	return;
 }
 
-function stop() {
-	callout(liveset["set"], "stop_playing");
-	callout(liveset["set"], "stop_playing");
-	callout(liveset["set"], "stop_all_clips");
-	return
-}
-
 function play() {
 	callout(liveset["set"], "start_playing");
-	setout(liveset["set"], "loop", 0);
+	//setout(liveset["set"], "loop", 0);
 	return;
 }
 
-function loop() {
-	callout(liveset["set"], "start_playing");
-	setout(liveset["set"], "loop", 1);
+function loop(bool) {
+	//callout(liveset["set"], "start_playing");
+	setout(liveset["set"], "loop", bool);
 	return;
 }
 
@@ -682,10 +601,23 @@ function converttime(time) {
 	};
 }
 
+// function convertdb(db) {
+// 	if (db.toString()=="-inf") return 0;
+// 	if (! isnum(db)) return null;
+// 	//return 2.07201247*(db*db)/10000 + 2.57503387*(db)/100 + 8.342259079/10;
+// 	return 2.027132923*(db*db*db)/1000000 + 3.987653083*(db*db)/10000 + 3.002900816*(db)/100 + 8.422843694/10;
+// 	//return 10 * Math.log(db/1.995262)/Math.log(10);
+// 	//return 1.995262 * Math.pow(10, db/10);
+// }
+
 function convertdb(db) {
-	if (db.toString()=="-inf") return 0;
-	if (! isnum(db)) return null;
-	return 2.07201247*(db*db)/10000 + 2.57503387*(db)/100 + 8.342259079/10;
+	if (db in dbtovol) return dbtovol[db];
+	return null;
+}
+
+function convertsend(db) {
+	if (db in dbtosend) return dbtosend[db];
+	return null;
 }
 
 function convertpan(pan) {
@@ -694,8 +626,11 @@ function convertpan(pan) {
 }
 
 function getname(object) {
-	var name = object.get("name").toString().toLowerCase().replace(/\W/g, "").replace(/\s/g, "");
-	//log(name);
+	var name = object.get("name").toString();
+	if (name[0]==".") {
+		return false;
+	}
+	name = name.toLowerCase().replace(/\W/g, "").replace(/\s/g, "");
 	return name;
 }
 
@@ -703,9 +638,232 @@ function isnum(item) {
 	return (! isNaN(parseInt(item)))
 }
 
+var dbtovol = {
+	"-inf": 0,
+	"-69": 0.002376,
+	"-68": 0.005042,
+	"-67": 0.008033,
+	"-66": 0.011130,
+	"-65": 0.014195,
+	"-64": 0.017634,
+	"-63": 0.021346,
+	"-62": 0.025248,
+	"-61": 0.029627,
+	"-60": 0.034624,
+	"-59": 0.040196,
+	"-58": 0.045391,
+	"-57": 0.051012,
+	"-56": 0.056434,
+	"-55": 0.062098,
+	"-54": 0.067786,
+	"-53": 0.073492,
+	"-52": 0.079490,
+	"-51": 0.085236,
+	"-50": 0.091348,
+	"-49": 0.097384,
+	"-48": 0.103536,
+	"-47": 0.110000,
+	"-46": 0.116202,
+	"-45": 0.122717,
+	"-44": 0.129429,
+	"-43": 0.136015,
+	"-42": 0.142882,
+	"-41": 0.150000,
+	"-40": 0.156977,
+	"-39": 0.164219,
+	"-38": 0.171707,
+	"-37": 0.179350,
+	"-36": 0.187037,
+	"-35": 0.194983,
+	"-34": 0.203181,
+	"-33": 0.211630,
+	"-32": 0.220335,
+	"-31": 0.229242,
+	"-30": 0.238439,
+	"-29": 0.247983,
+	"-28": 0.257907,
+	"-27": 0.268256,
+	"-26": 0.279088,
+	"-25": 0.290455,
+	"-24": 0.302414,
+	"-23": 0.315154,
+	"-22": 0.328847,
+	"-21": 0.343664,
+	"-20": 0.360000,
+	"-19": 0.378422,
+	"-18": 0.400000,
+	"-17": 0.424942,
+	"-16": 0.450000,
+	"-15": 0.474942,
+	"-14": 0.500000,
+	"-13": 0.524942,
+	"-12": 0.550000,
+	"-11": 0.574942,
+	"-10": 0.600000,
+	"-9": 0.624942,
+	"-8": 0.650000,
+	"-7": 0.674942,
+	"-6": 0.700000,
+	"-5": 0.724942,
+	"-4": 0.750000,
+	"-3": 0.774942,
+	"-2": 0.800000,
+	"-1": 0.824942,
+	"0": 0.850000,
+	"1": 0.874942,
+	"2": 0.900000,
+	"3": 0.924942,
+	"4": 0.950000,
+	"5": 0.974942,
+	"6": 1.000000
+};
 
+var dbtosend = {
+	"-inf": 0,
+	"-69": 0.013756,
+	"-68": 0.022411,
+	"-67": 0.029405,
+	"-66": 0.034624,
+	"-65": 0.040196,
+	"-64": 0.045391,
+	"-63": 0.051012,
+	"-62": 0.056434,
+	"-61": 0.062098,
+	"-60": 0.067786,
+	"-59": 0.073492,
+	"-58": 0.07949,
+	"-57": 0.085236,
+	"-56": 0.091348,
+	"-55": 0.097384,
+	"-54": 0.103536,
+	"-53": 0.11,
+	"-52": 0.116202,
+	"-51": 0.122717,
+	"-50": 0.129429,
+	"-49": 0.136015,
+	"-48": 0.142882,
+	"-47": 0.15,
+	"-46": 0.156977,
+	"-45": 0.164219,
+	"-44": 0.171707,
+	"-43": 0.17935,
+	"-42": 0.187037,
+	"-41": 0.194983,
+	"-40": 0.203181,
+	"-39": 0.21163,
+	"-38": 0.220335,
+	"-37": 0.229242,
+	"-36": 0.238439,
+	"-35": 0.247983,
+	"-34": 0.257907,
+	"-33": 0.268256,
+	"-32": 0.279088,
+	"-31": 0.290454,
+	"-30": 0.302414,
+	"-29": 0.315154,
+	"-28": 0.328847,
+	"-27": 0.343664,
+	"-26": 0.36,
+	"-25": 0.378422,
+	"-24": 0.4,
+	"-23": 0.424942,
+	"-22": 0.45,
+	"-21": 0.474942,
+	"-20": 0.5,
+	"-19": 0.524942,
+	"-18": 0.55,
+	"-17": 0.574942,
+	"-16": 0.6,
+	"-15": 0.624942,
+	"-14": 0.65,
+	"-13": 0.674942,
+	"-12": 0.7,
+	"-11": 0.724942,
+	"-10": 0.75,
+	"-9": 0.774942,
+	"-8": 0.8,
+	"-7": 0.824942,
+	"-6": 0.85,
+	"-5": 0.874942,
+	"-4": 0.9,
+	"-3": 0.924942,
+	"-2": 0.95,
+	"-1": 0.974942,
+	"0": 1
+}
 
+// raw send data (coll) from live observer
 
+// 1, 0.013756
+// 2, 0.022411
+// 3, 0.029405
+// 4, 0.034624
+// 5, 0.040196
+// 6, 0.045391
+// 7, 0.051012
+// 8, 0.056434
+// 9, 0.062098
+// 10, 0.067786;
+// 11, 0.073492;
+// 12, 0.07949;
+// 13, 0.085236;
+// 14, 0.091348;
+// 15, 0.097384;
+// 16, 0.103536;
+// 17, 0.11;
+// 18, 0.116202;
+// 19, 0.122717;
+// 20, 0.129429;
+// 21, 0.136015;
+// 22, 0.142882;
+// 23, 0.15;
+// 24, 0.156977;
+// 25, 0.164219;
+// 26, 0.171707;
+// 27, 0.17935;
+// 28, 0.187037;
+// 29, 0.194983;
+// 30, 0.203181;
+// 31, 0.21163;
+// 32, 0.220335;
+// 33, 0.229242;
+// 34, 0.238439;
+// 35, 0.247983;
+// 36, 0.257907;
+// 37, 0.268256;
+// 38, 0.279088;
+// 39, 0.290454;
+// 40, 0.302414;
+// 41, 0.315154;
+// 42, 0.328847;
+// 43, 0.343664;
+// 44, 0.36;
+// 45, 0.378422;
+// 46, 0.4;
+// 47, 0.424942;
+// 48, 0.45;
+// 49, 0.474942;
+// 50, 0.5;
+// 51, 0.524942;
+// 52, 0.55;
+// 53, 0.574942;
+// 54, 0.6;
+// 55, 0.624942;
+// 56, 0.65;
+// 57, 0.674942;
+// 58, 0.7;
+// 59, 0.724942;
+// 60, 0.75;
+// 61, 0.774942;
+// 62, 0.8;
+// 63, 0.824942;
+// 64, 0.85;
+// 65, 0.874942;
+// 66, 0.9;
+// 67, 0.924942;
+// 68, 0.95;
+// 69, 0.974942;
+// 70, 1.;
 
 
 

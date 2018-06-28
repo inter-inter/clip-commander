@@ -21,7 +21,7 @@ function log() {
 			out = message;
 		}
 		post(out);
-		outlet(3, out);
+		//outlet(3, out);
 	}
 	post("\n");
 }
@@ -144,7 +144,7 @@ getname.immediate = 1;
 toLowerCaseString.immediate = 1;
 
 function getname(object) {
-	var name = object.get("name").toString().toLowerCase().replace(/\W/g, "").replace(/\s/g, "");
+	var name = object.get("name").toString().toLowerCase().replace(".", "_").replace(/\s/g, "");
 	//log(name);
 	return name;
 }

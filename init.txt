@@ -1,0 +1,16 @@
+clickoff loop quant 0
+mic fx1db -inf fx2db -inf eardb -inf
+nord fx1db -inf fx2db -inf eardb -inf
+dtsynth off db -inf
+pbatmo off
+track beatrepeat off
+deanpad off db 0
+deanloops off db 0 fx1db -inf morphfilter macro1 64 looper speed 64
+pdmgrain off db -inf
+wastecodersynth off
+wastecodervox off
+wtloops db 0
+anyway db 0 fx2db -14
+fx1 off
+fx2 off
+trans db -inf
