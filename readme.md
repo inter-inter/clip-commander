@@ -1,5 +1,7 @@
 # ClipCommander
 
+NOTE.... this file corresponds to the original master upload, not the newest one. Sorry!
+
 ## Introduction
 
 ClipCommander is a Max for Live device that uses Javascript access to the Live API to allow clip-based command triggering of parameters in Ableton Live.
